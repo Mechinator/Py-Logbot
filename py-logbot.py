@@ -65,6 +65,8 @@ async def on_ready():
         if not discord.utils.get(guild.text_channels, name='mechinator-chats-mitch'):
             channel = await guild.create_text_channel('mechinator-chats-mitch', reason='Need somewhere to send the salt')
             await channel.send("This channel will relay the chat of all bots.\n\nUse $$mute (steamid32) in order to (un)mute a given player.\n\nThis command will work from any channel, as long as you have Guild Management permissions.\n\nI Also recommend setting up the permissions such that no one can talk in this channel.")
+    locate_logs.start()
+    send_messages.start()
 
 @client.event
 async def on_message(msg):
@@ -98,14 +100,16 @@ async def send_messages():
         msg += message + '\n'
         msg_raw += compose_message_raw(data) + '\n'
     if msg_raw:
-        print(msg_raw)
+        print(f"Sending message: {msg_raw}")
         for channel in client.get_all_channels():
             if channel.name == 'mechinator-chats-mitch' and isinstance(channel, discord.TextChannel):
                 await channel.send(msg)
+                print(f"Message sent to channel: {channel.name}")
 
 @tasks.loop(seconds=20)
 async def locate_logs():
     data_dir = '/opt/cathook/data'
+    print(f"Locating logs in {data_dir}")
     for filename in os.listdir(data_dir):
         if filename.startswith('chat-') and filename.endswith('.csv'):
             filepath = os.path.join(data_dir, filename)
@@ -114,6 +118,7 @@ async def locate_logs():
                 watching[filepath] = asyncio.create_task(tail_file(filepath))
 
 async def tail_file(filepath):
+    print(f"Tailing file: {filepath}")
     with open(filepath, 'r') as file:
         file.seek(0, os.SEEK_END)
         while True:
@@ -124,5 +129,3 @@ async def tail_file(filepath):
 
 watching = {}
 client.run(TOKEN)
-send_messages.start()
-locate_logs.start()
