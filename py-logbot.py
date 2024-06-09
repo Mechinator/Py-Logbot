@@ -1,8 +1,9 @@
 import discord
 import asyncio
 import csv
-from datetime import datetime, timedelta
 import os
+import re
+from datetime import datetime, timedelta
 from discord.ext import tasks
 from collections import deque
 from dotenv import load_dotenv
@@ -10,7 +11,10 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
-client = discord.Client()
+intents = discord.Intents.default()
+intents.message_content = True  
+
+client = discord.Client(intents=intents)
 
 queue = deque()
 stack = deque(maxlen=10)
