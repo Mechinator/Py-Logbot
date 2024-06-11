@@ -6,11 +6,13 @@ import os
 import re
 import json
 from datetime import datetime, timedelta
-from collections import deque, defaultdict
+from collections import deque
 from dotenv import load_dotenv
+import requests
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
+STEAM_API_KEY = os.getenv('STEAM_API_KEY')
 LOGO_URL = 'https://mechinator-cc.vercel.app/ftp.PNG'
 DATA_FILE = 'antispam_data.json'
 
@@ -39,13 +41,22 @@ def anti_spam(data):
         return False
     if steam_id not in anti_spam_data:
         anti_spam_data[steam_id] = {'count': 0, 'last': datetime.min}
-    if datetime.now() - anti_spam_data[steam_id]['last'] > timedelta(seconds=15):
+    
+    if datetime.now() - anti_spam_data[steam_id]['last'] > timedelta(seconds=5):
         anti_spam_data[steam_id]['count'] = 0
+    
     anti_spam_data[steam_id]['count'] += 1
     anti_spam_data[steam_id]['last'] = datetime.now()
-    if anti_spam_data[steam_id]['count'] > 8:
+    
+    if anti_spam_data[steam_id]['count'] > 3:
         anti_spam_data[steam_id]['banned'] = datetime.now()
-    return 'banned' not in anti_spam_data[steam_id]
+        muted[steam_id] = True
+        save_antispam_data()
+        for guild in bot.guilds:
+            asyncio.create_task(send_mute_notification(guild, steam_id, 'Muted'))
+        return False
+    
+    return True
 
 def compose_embed(data, logo_url=LOGO_URL):
     steamid32, username, message, ipc_id = data[1], data[2], data[3], data[4]
@@ -72,16 +83,42 @@ async def on_line(data):
         queue.append(data)
 
 def save_antispam_data():
+    serializable_data = {
+        'anti_spam_data': {
+            k: {
+                'count': v['count'],
+                'last': v['last'].isoformat() if isinstance(v['last'], datetime) else v['last'],
+                'banned': v.get('banned').isoformat() if isinstance(v.get('banned'), datetime) else v.get('banned')
+            } for k, v in anti_spam_data.items()
+        },
+        'muted': muted
+    }
     with open(DATA_FILE, 'w') as f:
-        json.dump({'anti_spam_data': anti_spam_data, 'muted': muted}, f)
+        json.dump(serializable_data, f)
 
 def load_antispam_data():
     global anti_spam_data, muted
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r') as f:
             data = json.load(f)
-            anti_spam_data = data.get('anti_spam_data', {})
+            anti_spam_data = {
+                k: {
+                    'count': v['count'],
+                    'last': datetime.fromisoformat(v['last']) if v['last'] else datetime.min,
+                    'banned': datetime.fromisoformat(v['banned']) if v.get('banned') else None
+                } for k, v in data.get('anti_spam_data', {}).items()
+            }
             muted = data.get('muted', {})
+    else:
+        save_antispam_data()
+
+def get_steam_username(steamid64):
+    url = f"http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key={STEAM_API_KEY}&steamids={steamid64}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        data = response.json()
+        return data['response']['players'][0]['personaname']
+    return "Unknown"
 
 async def ensure_antispam_channel(guild):
     channel = discord.utils.get(guild.text_channels, name='antispam')
@@ -91,14 +128,15 @@ async def ensure_antispam_channel(guild):
 
 async def send_mute_notification(guild, steamid32, action):
     channel = await ensure_antispam_channel(guild)
-    steam_profile_url = f"https://steamcommunity.com/profiles/{convert_steamid32_to_steamid64(steamid32)}"
+    steamid64 = convert_steamid32_to_steamid64(steamid32)
+    steam_profile_url = f"https://steamcommunity.com/profiles/{steamid64}"
+    username = get_steam_username(steamid64)
     embed = discord.Embed(
         title="AntiSpam Notification",
-        description=f"{action} [U:1:{steamid32}]",
+        description=f"{action} [{username}](<{steam_profile_url}>)",
         color=0xe74c3c if action == 'Muted' else 0x2ecc71
     )
     embed.set_thumbnail(url=LOGO_URL)
-    embed.set_footer(text=f"Steam Profile: {steam_profile_url}")
     await channel.send(embed=embed)
 
 @bot.event
@@ -113,6 +151,7 @@ async def on_ready():
         tasks_started = True
 
     for guild in bot.guilds:
+        await ensure_antispam_channel(guild)
         if not discord.utils.get(guild.text_channels, name='mechinator-chats-mitch'):
             channel = await guild.create_text_channel('mechinator-chats-mitch', reason='Need somewhere to send the salt')
             await channel.send("This channel will relay the chat of all bots.\n\nUse $$mute (steamid32) in order to (un)mute a given player.\n\nThis command will work from any channel, as long as you have Guild Management permissions.\n\nI Also recommend setting up the permissions such that no one can talk in this channel.")
