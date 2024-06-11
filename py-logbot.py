@@ -43,7 +43,7 @@ def anti_spam(data):
     if steam_id not in anti_spam_data:
         anti_spam_data[steam_id] = {'count': 0, 'last': datetime.min}
     
-    if datetime.now() - anti_spam_data[steam_id]['last'] > timedelta(seconds=5):
+    if datetime.now() - anti_spam_data[steam_id]['last'] > timedelta(seconds=8):
         anti_spam_data[steam_id]['count'] = 0
     
     anti_spam_data[steam_id]['count'] += 1
@@ -141,12 +141,15 @@ async def send_mute_notification(guild, steamid32, action):
     steam_profile_url = f"https://steamcommunity.com/profiles/{steamid64}"
     profile_data = get_steam_profile_data(steam_profile_url)
     username = profile_data['personaname']
+    avatar_url = profile_data['avatarfull']
+    
     embed = discord.Embed(
         title="AntiSpam Notification",
         description=f"{action} [{username}](<{steam_profile_url}>)",
         color=0xe74c3c if action == 'Muted' else 0x2ecc71
     )
-    embed.set_thumbnail(url=LOGO_URL)
+    embed.set_author(name=username, url=steam_profile_url, icon_url=LOGO_URL)
+    embed.set_thumbnail(url=avatar_url)
     await channel.send(embed=embed)
     print(f"Sent mute notification for {steamid32} in guild {guild.name}.")
 
@@ -211,7 +214,7 @@ async def send_messages():
         for channel in bot.get_all_channels():
             if channel.name == 'mechinator-chats-mitch' and isinstance(channel, discord.TextChannel):
                 await channel.send(embed=embed)
-                print(f"Sent message in channel {channel.name}.")
+                print(f"Sent message to {channel.name}.")
 
 @tasks.loop(seconds=20)
 async def locate_logs():
