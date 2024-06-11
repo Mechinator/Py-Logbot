@@ -38,6 +38,7 @@ def split_csv(csv_string):
 def anti_spam(data):
     steam_id = data[1]
     if muted.get(steam_id):
+        print(f"User {steam_id} is muted, skipping message.")
         return False
     if steam_id not in anti_spam_data:
         anti_spam_data[steam_id] = {'count': 0, 'last': datetime.min}
@@ -54,6 +55,7 @@ def anti_spam(data):
         save_antispam_data()
         for guild in bot.guilds:
             asyncio.create_task(send_mute_notification(guild, steam_id, 'Muted'))
+        print(f"User {steam_id} muted for spamming.")
         return False
     
     return True
@@ -61,14 +63,16 @@ def anti_spam(data):
 def compose_embed(data, logo_url=LOGO_URL):
     steamid32, username, message, ipc_id = data[1], data[2], data[3], data[4]
     steam_profile_url = f"https://steamcommunity.com/profiles/{convert_steamid32_to_steamid64(steamid32)}"
+    profile_data = get_steam_profile_data(steam_profile_url)
+    steam_avatar_url = profile_data.get('avatarfull', logo_url)
     
     embed = discord.Embed(
         description=message,
         color=0x9b59b6
     )
     embed.set_author(name=username, url=steam_profile_url, icon_url=logo_url)
+    embed.set_thumbnail(url=steam_avatar_url)
     embed.set_footer(text=f"[Mechinator {ipc_id}] [U:1:{steamid32}]")
-    embed.set_thumbnail(url=logo_url)
     return embed
 
 def test_and_set(line_hash):
@@ -81,6 +85,7 @@ async def on_line(data):
     line_hash = hash(data)
     if test_and_set(line_hash):
         queue.append(data)
+        print(f"Line added to queue: {data}")
 
 def save_antispam_data():
     serializable_data = {
@@ -95,6 +100,7 @@ def save_antispam_data():
     }
     with open(DATA_FILE, 'w') as f:
         json.dump(serializable_data, f)
+    print("Antispam data saved.")
 
 def load_antispam_data():
     global anti_spam_data, muted
@@ -111,26 +117,30 @@ def load_antispam_data():
             muted = data.get('muted', {})
     else:
         save_antispam_data()
+    print("Antispam data loaded.")
 
-def get_steam_username(steamid64):
+def get_steam_profile_data(steam_profile_url):
+    steamid64 = steam_profile_url.split('/')[-1]
     url = f"http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key={STEAM_API_KEY}&steamids={steamid64}"
     response = requests.get(url)
     if response.status_code == 200:
         data = response.json()
-        return data['response']['players'][0]['personaname']
-    return "Unknown"
+        return data['response']['players'][0]
+    return {"personaname": "Unknown", "avatarfull": LOGO_URL}
 
 async def ensure_antispam_channel(guild):
     channel = discord.utils.get(guild.text_channels, name='antispam')
     if not channel:
         channel = await guild.create_text_channel('antispam', reason='Antispam notifications')
+        print(f"Created antispam channel in guild {guild.name}.")
     return channel
 
 async def send_mute_notification(guild, steamid32, action):
     channel = await ensure_antispam_channel(guild)
     steamid64 = convert_steamid32_to_steamid64(steamid32)
     steam_profile_url = f"https://steamcommunity.com/profiles/{steamid64}"
-    username = get_steam_username(steamid64)
+    profile_data = get_steam_profile_data(steam_profile_url)
+    username = profile_data['personaname']
     embed = discord.Embed(
         title="AntiSpam Notification",
         description=f"{action} [{username}](<{steam_profile_url}>)",
@@ -138,6 +148,7 @@ async def send_mute_notification(guild, steamid32, action):
     )
     embed.set_thumbnail(url=LOGO_URL)
     await channel.send(embed=embed)
+    print(f"Sent mute notification for {steamid32} in guild {guild.name}.")
 
 @bot.event
 async def on_ready():
@@ -155,6 +166,7 @@ async def on_ready():
         if not discord.utils.get(guild.text_channels, name='mechinator-chats-mitch'):
             channel = await guild.create_text_channel('mechinator-chats-mitch', reason='Need somewhere to send the salt')
             await channel.send("This channel will relay the chat of all bots.\n\nUse $$mute (steamid32) in order to (un)mute a given player.\n\nThis command will work from any channel, as long as you have Guild Management permissions.\n\nI Also recommend setting up the permissions such that no one can talk in this channel.")
+            print(f"Created mechinator-chats-mitch channel in guild {guild.name}.")
 
 @bot.event
 async def on_message(msg):
@@ -172,9 +184,11 @@ async def on_message(msg):
                 if muted.get(steamid32):
                     muted[steamid32] = False
                     await send_mute_notification(msg.guild, steamid32, 'Unmuted')
+                    print(f"Unmuted {steamid32}.")
                 else:
                     muted[steamid32] = True
                     await send_mute_notification(msg.guild, steamid32, 'Muted')
+                    print(f"Muted {steamid32}.")
                 save_antispam_data()
                 await msg.channel.send(f"{'Unmuting' if not muted[steamid32] else 'Muting'} [U:1:{steamid32}]")
 
@@ -188,13 +202,16 @@ async def send_messages():
         csv_string = queue.popleft()
         data = split_csv(csv_string)
         if not anti_spam(data):
+            print(f"Message from {data[1]} is considered spam.")
             continue
         if re.match(r'(just disable vac tf|cat-bot) \d+$', data[2]):
+            print(f"Message from {data[1]} matches spam pattern.")
             continue
         embed = compose_embed(data)
         for channel in bot.get_all_channels():
             if channel.name == 'mechinator-chats-mitch' and isinstance(channel, discord.TextChannel):
                 await channel.send(embed=embed)
+                print(f"Sent message in channel {channel.name}.")
 
 @tasks.loop(seconds=20)
 async def locate_logs():
@@ -205,6 +222,7 @@ async def locate_logs():
             if filepath not in watching:
                 watching.add(filepath)
                 asyncio.create_task(tail_file(filepath))
+                print(f"Started watching file {filepath}.")
 
 async def tail_file(filepath):
     with open(filepath, 'r', errors='ignore') as file:
